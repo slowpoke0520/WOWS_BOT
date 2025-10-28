@@ -61,6 +61,19 @@ def capture_window(hwnd):
         return None, None
 
 # ------------------------
+def to_gray(bgr):
+    """将BGR彩色图像转换为灰度图像"""
+    import cv2
+    if bgr is None:
+        return None
+    if len(bgr.shape) == 2:
+        return bgr
+    try:
+        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+        return gray
+    except Exception:
+        return bgr
+
 # 模板加载与多尺度匹配
 # ------------------------
 def load_template(name):
