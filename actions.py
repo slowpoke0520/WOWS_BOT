@@ -1,7 +1,7 @@
 # actions.py - 点击 / 确认 / 自动导航等动作（都基于客户区坐标转换）
 from utils import find_game_window, capture_window, safe_click_in_window, find_template_in_window, log, dbg, save_debug_overlay
-import time, config
-import cv2
+import time, config, cv2
+
 def click_with_confirm(click_templates, confirm_templates, max_retry=None, delay_between=None):
     if max_retry is None: max_retry = config.MAX_RETRY
     if delay_between is None: delay_between = config.CLICK_CONFIRM_DELAY
