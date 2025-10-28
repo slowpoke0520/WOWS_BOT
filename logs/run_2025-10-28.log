@@ -1,0 +1,5 @@
+[2025-10-28 15:47:25] WoWsBot 启动 - 固定模板版本
+[2025-10-28 15:47:25] [DEBUG] templates folder exists: G:\autogame\WOWS_BOT\templates
+[2025-10-28 15:47:25] 按 f8 切换启动/停止，按 f9 强制退出
+[2025-10-28 15:47:44] [HOTKEY] 运行状态切换为：运行中
+[2025-10-28 15:47:44] [FATAL] 未处理异常: module 'utils' has no attribute 'to_gray'
