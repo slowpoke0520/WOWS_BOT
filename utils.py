@@ -156,12 +156,69 @@ def safe_click_in_window(rect, pos_in_client, hold=None):
 # ------------------------
 # 高级：搜索模板并返回相对客户区坐标
 # ------------------------
-def find_template_in_window(gray_img, template_name, threshold=None):
-    tpl = load_template(template_name)
-    if tpl is None:
+def find_template_in_window(gray_img_or_bgr, template_name, threshold=None):
+    import cv2, numpy as np, os
+    path = os.path.join(TEMPLATE_DIR, template_name)
+    if not os.path.exists(path):
+        dbg(f"模板不存在: {path}")
         return None, 0.0
-    pos, val = match_template_multiscale(gray_img, tpl, threshold)
-    return pos, val
+
+    tpl_bgr = cv2.imread(path, cv2.IMREAD_COLOR)
+    if tpl_bgr is None:
+        dbg(f"读取模板失败: {path}")
+        return None, 0.0
+
+    # 如果输入是灰度图则转BGR
+    if len(gray_img_or_bgr.shape) == 2:
+        img_bgr = cv2.cvtColor(gray_img_or_bgr, cv2.COLOR_GRAY2BGR)
+    else:
+        img_bgr = gray_img_or_bgr
+
+    # 自动识别模板主色类别
+    mean_color = tpl_bgr.mean(axis=(0,1))  # BGR 平均值
+    b,g,r = mean_color
+    dominant = "neutral"
+    if r > g*1.2 and r > b*1.2:
+        dominant = "enemy"
+    elif g > r*1.2 and g > b*1.2:
+        dominant = "friendly"
+    elif abs(r-g) < 40 and abs(r-b) < 40:
+        dominant = "neutral"
+
+    # 根据模板类别定义搜索颜色范围
+    if dominant == "enemy":
+        lower = np.array([0, 0, 80])      # 红色范围
+        upper = np.array([120, 120, 255])
+    elif dominant == "neutral":
+        lower = np.array([90, 90, 90])    # 灰白
+        upper = np.array([255, 255, 255])
+    elif dominant == "friendly":
+        # 我方模板直接跳过（不参与匹配）
+        dbg(f"[COLOR] {template_name} 判定为友方模板，跳过匹配。")
+        return None, 0.0
+    else:
+        lower = np.array([0,0,0])
+        upper = np.array([255,255,255])
+
+    # 创建颜色掩膜
+    mask = cv2.inRange(img_bgr, lower, upper)
+    masked = cv2.bitwise_and(img_bgr, img_bgr, mask=mask)
+
+    # 彩色模板匹配
+    try:
+        res = cv2.matchTemplate(masked, tpl_bgr, cv2.TM_CCOEFF_NORMED)
+        minv, maxv, minloc, maxloc = cv2.minMaxLoc(res)
+        if threshold is None:
+            threshold = config.DEFAULT_THRESHOLD
+        if maxv < threshold:
+            return None, float(maxv)
+        cx = maxloc[0] + tpl_bgr.shape[1] // 2
+        cy = maxloc[1] + tpl_bgr.shape[0] // 2
+        dbg(f"[COLOR] 模板 {template_name} 颜色={dominant}, 置信度={maxv:.2f}")
+        return (int(cx), int(cy)), float(maxv)
+    except Exception as e:
+        dbg(f"find_template_in_window error: {e}")
+        return None, 0.0
 
 # ------------------------
 # 兼容旧接口（main.py 旧调用）

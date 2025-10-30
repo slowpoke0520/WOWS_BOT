@@ -9,6 +9,8 @@ def main():
     ensure_templates_exist()
     running = False
     last_state = None
+    # main.py 头部定义
+    nav_done = False
 
     log(f"按 {config.HOTKEY_TOGGLE} 切换启动/停止，按 {config.HOTKEY_FORCE_STOP} 强制退出")
 

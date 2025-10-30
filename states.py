@@ -48,7 +48,7 @@ def detect_state_once():
     if v_vict >= 0.8 or v_defeat >= 0.8:
         return "RESULT", info
     # If score bar exists AND minimap exists -> battle
-    if v_score >= 0.55 and v_minimap >= 0.45:
+    if v_score >= 0.55 and v_minimap >= 0.55:
         return "BATTLE", info
     # auto nav alone is strong indicator
     if v_auto >= 0.75:
