@@ -3,18 +3,18 @@ import time, keyboard, config
 from utils import log, dbg, ensure_templates_exist, find_game_window
 from states import detect_state_once
 import actions
+from typing import Optional, Dict
 
 def main():
     log("WoWsBot 启动 - 固定模板版本")
     ensure_templates_exist()
     running = False
     last_state = None
-    # main.py 头部定义
-    nav_done = False
+    nav_done = False  # ✅ 用于记忆是否已经完成自动导航
 
     log(f"按 {config.HOTKEY_TOGGLE} 切换启动/停止，按 {config.HOTKEY_FORCE_STOP} 强制退出")
 
-    # register hotkeys
+    # 注册热键
     def toggle():
         nonlocal running
         running = not running
@@ -29,7 +29,6 @@ def main():
 
     try:
         while True:
-            # quick check if window exists
             hwnd = find_game_window()
             if hwnd is None:
                 log("未找到游戏窗口，等待中...")
@@ -45,27 +44,45 @@ def main():
                 log(f"State change: {last_state} -> {state} | info={info}")
                 last_state = state
 
-            # per-state actions
+            # === 状态处理 ===
             if state == "PORT":
                 log("[MAIN] 在港口 - 尝试点击加入战斗")
-                actions.click_with_confirm(["port_join_battle.png","port_join_battle_disabled.png"],
-                                           ["queue_waiting.png","battle_score_bar.png"],
-                                           max_retry=3)
+                nav_done = False  # ✅ 每次回到港口重置
+                actions.click_with_confirm(
+                    ["port_join_battle.png", "port_join_battle_disabled.png"],
+                    ["queue_waiting.png", "battle_score_bar.png"],
+                    max_retry=3
+                )
+
             elif state == "QUEUE":
                 log("[MAIN] 匹配中 - 等待进入战斗")
                 time.sleep(2)
+
             elif state == "BATTLE":
-                log("[MAIN] 战斗中 - 确保自动导航")
-                actions.ensure_auto_nav_enabled()
+                if not nav_done:  # ✅ 仅第一次执行导航逻辑
+                    log("[MAIN] 战斗中 - 确保自动导航")
+                    success = actions.ensure_auto_nav_enabled()
+                    if success:
+                        nav_done = True  # ✅ 记住导航已完成
+                        dbg("[MAIN] 自动导航完成，后续不再重复执行")
+                else:
+                    dbg("[MAIN] 自动导航已完成，无需重复操作")
                 time.sleep(2)
+
             elif state == "RESULT":
-                log("[MAIN] 结算界面 - 点击返回港口")
-                actions.click_with_confirm(["result_victory.png","result_defeat.png","back_to_port.png"],
-                                           ["port_join_battle.png"],
-                                           max_retry=3)
+                log("[MAIN] 结算界面 - 点击返回港口按钮")
+                nav_done = False  # ✅ 战斗结束重置
+                actions.click_with_confirm(
+                    ["back_to_port.png"],
+                    ["port_join_battle.png"],
+                    max_retry=3
+                )
+
             else:
                 dbg("[MAIN] 未识别状态，继续检测")
+
             time.sleep(config.STATE_CHECK_INTERVAL)
+
     except KeyboardInterrupt:
         log("收到 Ctrl+C，退出")
     except SystemExit:

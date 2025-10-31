@@ -1,66 +1,105 @@
-# states.py - 状态识别（使用 utils）
-from utils import find_game_window, capture_window, get_client_rect, find_template_in_window, save_debug_overlay, log, dbg
-import utils, config
+import cv2, os
+import numpy as np
+import config
+from utils import log, dbg, capture_window, find_game_window
 
-# 固定要检测的模板文件名（与上面模板清单一致）
-TEMPLATE_PORT = "port_join_battle.png"
-TEMPLATE_PORT_DISABLED = "port_join_battle_disabled.png"
-TEMPLATE_QUEUE = "queue_waiting.png"
-TEMPLATE_SCORE = "battle_score_bar.png"
-TEMPLATE_MINIMAP = "minimap_corner.png"
-TEMPLATE_AUTO_NAV = "auto_nav_icon.png"
-TEMPLATE_VICTORY = "result_victory.png"
-TEMPLATE_DEFEAT = "result_defeat.png"
-TEMPLATE_BACK = "back_to_port.png"
+TEMPLATE_DIR = os.path.join(os.path.dirname(__file__), "templates")
+
+# -------------------------------
+# 新增：带坐标的模板匹配函数
+# -------------------------------
+def match_template_ex(img, template_name, threshold=0.6):
+    """返回 (置信度, 坐标) 或 None"""
+    template_path = os.path.join(TEMPLATE_DIR, template_name)
+    if not os.path.exists(template_path):
+        dbg(f"模板不存在: {template_path}")
+        return None
+
+    template = cv2.imread(template_path, cv2.IMREAD_GRAYSCALE)
+    if template is None:
+        dbg(f"无法读取模板: {template_path}")
+        return None
+
+    res = cv2.matchTemplate(img, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+    if max_val >= threshold:
+        return (max_val, max_loc)
+    return None
+
+
+# -------------------------------
+# 状态检测主函数
+# -------------------------------
+# states.py 中修改 detect_state_once()
 
 def detect_state_once():
     hwnd = find_game_window()
-    if not hwnd:
-        return "UNKNOWN", {"reason":"no_window"}
-    img_rect = capture_window(hwnd)
-    if img_rect is None or img_rect[0] is None:
-        return "UNKNOWN", {"reason":"capture_failed"}
-    bgr, rect = img_rect
-    gray = utils.to_gray(bgr)
+    if hwnd is None:
+        return "UNKNOWN", {}
 
-    matches = []
-    # detect each template, store values
-    pos_port, v_port = find_template_in_window(gray, TEMPLATE_PORT, threshold=0.75)
-    pos_port_disabled, v_port_dis = find_template_in_window(gray, TEMPLATE_PORT_DISABLED, threshold=0.75)
-    pos_queue, v_queue = find_template_in_window(gray, TEMPLATE_QUEUE, threshold=0.7)
-    pos_score, v_score = find_template_in_window(gray, TEMPLATE_SCORE, threshold=0.6)
-    pos_minimap, v_minimap = find_template_in_window(gray, TEMPLATE_MINIMAP, threshold=0.6)
-    pos_auto, v_auto = find_template_in_window(gray, TEMPLATE_AUTO_NAV, threshold=0.75)
-    pos_vict, v_vict = find_template_in_window(gray, TEMPLATE_VICTORY, threshold=0.8)
-    pos_defeat, v_defeat = find_template_in_window(gray, TEMPLATE_DEFEAT, threshold=0.8)
-    pos_back, v_back = find_template_in_window(gray, TEMPLATE_BACK, threshold=0.7)
+    bgr, rect = capture_window(hwnd)
+    if bgr is None:
+        dbg("[STATE] capture_window 返回 None，跳过")
+        return "UNKNOWN", {}
 
-    info = {
-        "port": v_port, "port_disabled": v_port_dis, "queue": v_queue,
-        "score": v_score, "minimap": v_minimap, "auto_nav": v_auto,
-        "victory": v_vict, "defeat": v_defeat, "back": v_back
-    }
+    gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
 
-    # log the values compactly
+    info = {}
+    state = "UNKNOWN"
+
+    # -------------------------------
+    # ① 检测港口专属按钮 “开始战斗”
+    # -------------------------------
+    port_btn_res = match_template_ex(gray, "port_join_battle.png", threshold=0.7)
+    if port_btn_res:
+        v_port, pos_port = port_btn_res
+        info["port_join_battle"] = v_port
+        if v_port >= 0.7:
+            state = "PORT"
+            dbg(f"[STATE] 检测到港口按钮 port_join_battle (v={v_port:.2f}) -> 识别为港口")
+
+    # -------------------------------
+    # ② 检测 minimap_corner（战斗 / 港口都可能出现）
+    # -------------------------------
+    minimap_res = match_template_ex(gray, "minimap_corner.png", threshold=0.6)
+    if minimap_res:
+        v_minimap, (x, y) = minimap_res
+        info["minimap"] = v_minimap
+        dbg(f"[STATE] minimap_corner 检测: 置信度={v_minimap:.2f}, 坐标=({x},{y})")
+
+        # 仅当尚未判断为港口时，才进一步判断是否为战斗
+        if state != "PORT" and v_minimap >= 0.7 and x > 1000 and y > 600:
+            state = "BATTLE"
+            dbg("[STATE] minimap_corner 出现在右下角 -> 识别为战斗界面")
+
+    # -------------------------------
+    # 检测胜利、失败、返回按钮 -> RESULT
+    # -------------------------------
+    for name in ["victory.png", "defeat.png", "back_to_port.png"]:
+        path = os.path.join(TEMPLATE_DIR, name)
+        if not os.path.exists(path):
+            continue
+        template = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if template is None:
+            continue
+        res = cv2.matchTemplate(gray, template, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, _ = cv2.minMaxLoc(res)
+        info[name.split(".")[0]] = max_val
+        if max_val >= 0.8:
+            state = "RESULT"
+
+    # -------------------------------
+    # 匹配中界面 -> QUEUE
+    # -------------------------------
+    if state == "UNKNOWN":
+        queue_res = match_template_ex(gray, "queue_waiting.png", threshold=0.7)
+        if queue_res:
+            v_queue, _ = queue_res
+            info["queue"] = v_queue
+            if v_queue >= 0.7:
+                state = "QUEUE"
+                dbg("[STATE] 检测到匹配界面 queue_waiting.png -> QUEUE")
+
     dbg(f"detect_state values: {info}")
-
-    # Decision rules (priority order)
-    if v_vict >= 0.8 or v_defeat >= 0.8:
-        return "RESULT", info
-    # If score bar exists AND minimap exists -> battle
-    if v_score >= 0.55 and v_minimap >= 0.55:
-        return "BATTLE", info
-    # auto nav alone is strong indicator
-    if v_auto >= 0.75:
-        return "BATTLE", info
-    # queue detection
-    if v_queue >= 0.7:
-        return "QUEUE", info
-    # port (join click) - if enabled (not disabled)
-    if v_port >= 0.75:
-        return "PORT", info
-    # if only disabled button found, treat as PORT (but disabled)
-    if v_port_dis >= 0.75:
-        return "PORT_DISABLED", info
-    # fallback: not recognized
-    return "UNKNOWN", info
+    return state, info

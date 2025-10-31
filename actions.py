@@ -65,11 +65,7 @@ def click_with_confirm(click_templates, confirm_templates, max_retry=None, delay
     log("[ACTION] 点击确认失败，超过重试次数")
     return False
 
-<<<<<<< Updated upstream
-def ensure_auto_nav_enabled():
-    # Example: press 'm' to open map and try to click central point if auto nav not detected
-=======
-
+#<<<<<<< Updated upstream
 # -----------------------------------------------------
 # 自动导航增强版：多模板检测中立 & 敌方占领点
 # -----------------------------------------------------
@@ -84,33 +80,10 @@ def ensure_auto_nav_enabled(screenshot=None):
     from utils import dbg, log, find_game_window, capture_window, to_gray, find_template_in_window, safe_click_screen_abs
     import config
 
->>>>>>> Stashed changes
     hwnd = find_game_window()
     if hwnd is None:
         log("[NAV] 未找到游戏窗口，无法导航")
         return False
-<<<<<<< Updated upstream
-    bgr, rect = capture_window(hwnd)
-    if bgr is None:
-        return False
-    gray = bgr if len(bgr.shape) == 2 else cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-    p_auto, v_auto = find_template_in_window(gray, "auto_nav_icon.png", threshold=None)
-    if p_auto and v_auto >= 0.75:
-        dbg("[NAV] 自动导航已启用")
-        return True
-    # otherwise try to open map and click center (simple heuristic)
-    import pyautogui
-    pyautogui.press("m")
-    time.sleep(0.6)
-    # click center of client
-    cx = rect["width"] // 2
-    cy = rect["height"] // 2
-    safe_click_in_window(rect, (cx, cy))
-    time.sleep(0.2)
-    pyautogui.press("m")
-    time.sleep(0.6)
-    return True
-=======
 
     # 1️⃣ 获取截图（若主循环传入则复用）
     if screenshot is not None:
@@ -119,8 +92,8 @@ def ensure_auto_nav_enabled(screenshot=None):
         gray = to_gray(capture_window(hwnd)[0])
 
     # 2️⃣ 检测自动导航图标是否已启用
-    p_auto, v_auto = find_template_in_window(gray, "auto_nav_icon.png", threshold=0.75)
-    if p_auto and v_auto >= 0.6:
+    p_auto, v_auto = find_template_in_window(gray, "auto_nav_icon.png", threshold=0.6)
+    if p_auto and v_auto >= 0.85:
         dbg(f"[NAV] 自动导航已启用 (v={v_auto:.2f}) -> 不再重复操作")
         keyboard.send("m")  # ✅ 自动关闭地图
         time.sleep(0.3)
@@ -137,32 +110,74 @@ def ensure_auto_nav_enabled(screenshot=None):
         gray = to_gray(capture_window(hwnd)[0])
 
     # 4️⃣ 搜索目标占领点（中立 + 敌方）
+    # 4️⃣ 搜索目标占领点（中立 + 敌方）
     candidates = []
     cap_templates = [
-        "cap_enemy_4.png", "cap_enemy_1.png", "cap_enemy_2.png", "cap_enemy_3.png",
-        "cap_neutral_4.png", "cap_neutral_1.png", "cap_neutral_2.png", "cap_neutral_3.png"
+        "cap_enemy.png", "cap_enemy_1.png", "cap_enemy_2.png", "cap_enemy_3.png",
+        "cap_neutral.png", "cap_neutral_1.png", "cap_neutral_2.png", "cap_neutral_3.png"
     ]
 
+    import os
+    from utils import save_debug_overlay
+
+    dbg("[NAV] 开始检测占领点模板...")
+
     for tpl in cap_templates:
-        p, v = find_template_in_window(gray, tpl, threshold=0.78)
-        if p and v >= 0.75:
+        path = os.path.join(config.TEMPLATE_DIR, tpl)
+        dbg(f"[NAV] 尝试加载模板 {tpl}: {os.path.exists(path)}")
+        p, v = find_template_in_window(gray, tpl, threshold=0.6)
+        dbg(f"[NAV] 模板 {tpl} 匹配结果: p={p}, v={v:.2f}")
+        if p and v >= 0.6:
             dbg(f"[NAV] 检测到目标 {tpl} (v={v:.2f}) 坐标 {p}")
             candidates.append((tpl, v, p))
+    # 🚫 过滤掉屏幕上方 UI 的误检点（例如战斗界面上方的 cap 图标）
+    before_filter = len(candidates)
+    candidates = [(tpl, v, p) for tpl, v, p in candidates if p[1] > 100]
+
+    if len(candidates) < before_filter:
+        dbg(f"[NAV] 过滤掉 {before_filter - len(candidates)} 个靠上方的误检点 (y < 100)")
+
+    if not candidates:
+        dbg("[NAV] 未检测到可导航的目标点")
+        # 保存当前地图截图方便调试
+        try:
+            save_debug_overlay(gray, {"left": 0, "top": 0}, [])
+        except Exception as e:
+            dbg(f"[NAV] 保存调试截图失败: {e}")
+        return False
 
     if not candidates:
         dbg("[NAV] 未检测到可导航的目标点")
         return False
 
-    # 5️⃣ 选择置信度最高的目标并点击
-    tpl_best, v_best, p_best = max(candidates, key=lambda x: x[1])
-    dbg(f"[NAV] 选择点击 {tpl_best} (v={v_best:.2f}) 坐标 {p_best}")
-    safe_click_screen_abs(p_best[0] + 11, p_best[1] + 45)
+    # 5️⃣ 连续 Shift 点击多个导航点
+    import pyautogui
+
+    # 按置信度从高到低排序，最多选取 3 个目标点
+    candidates.sort(key=lambda x: x[1], reverse=True)
+    selected_points = [c[2] for c in candidates[:3]]
+
+    dbg(f"[NAV] 检测到 {len(selected_points)} 个导航点，将按住 Shift 连续点击: {selected_points}")
+
+    # 按住 Shift
+    pyautogui.keyDown('shift')
+    time.sleep(0.15)
+
+    # 逐个点击目标点
+    for i, (x, y) in enumerate(selected_points, start=1):
+        dbg(f"[NAV] Shift点击第 {i} 个点: ({x + 11}, {y + 45})")
+        safe_click_screen_abs(x + 11, y + 45)
+        time.sleep(0.35)  # 避免点击过快漏点
+
+    # 松开 Shift
+    pyautogui.keyUp('shift')
+    dbg("[NAV] 释放 Shift，完成多点路径导航")
     time.sleep(1.0)
 
     # 6️⃣ 再次检测导航是否启用
     gray = to_gray(capture_window(hwnd)[0])
-    p_auto2, v_auto2 = find_template_in_window(gray, "auto_nav_icon.png", threshold=0.6)
-    if p_auto2 and v_auto2 >= 0.6:
+    p_auto2, v_auto2 = find_template_in_window(gray, "auto_nav_icon.png", threshold=0.8)
+    if p_auto2 and v_auto2 >= 0.8:
         dbg(f"[NAV] 导航已成功启用 (v={v_auto2:.2f}) -> 关闭地图")
         keyboard.send("m")  # ✅ 导航成功后自动关闭地图
         time.sleep(0.3)
@@ -170,5 +185,3 @@ def ensure_auto_nav_enabled(screenshot=None):
     else:
         dbg(f"[NAV] 尝试点击后仍未检测到导航图标 (v={v_auto2:.2f})")
         return False
-
->>>>>>> Stashed changes
